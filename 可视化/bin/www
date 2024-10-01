@@ -1,0 +1,237 @@
+#!/usr/bin/env node
+
+/**
+ * Module dependencies.
+ */
+
+var app = require('../app');
+var debug = require('debug')('hello-world:server');
+var http = require('http');
+const socketIo = require('socket.io');
+const db = require('../utils/mysql')
+const config = require('../utils/config');
+
+/**
+ * Get port from environment and store in Express.
+ */
+
+var port = normalizePort(process.env.PORT || '3000');
+app.set('port', port);
+
+/**
+ * Create HTTP server.
+ */
+
+var server = http.createServer(app);
+
+
+const io = socketIo(server);
+
+// 当客户端连接时，触发连接事件
+io.on('connection', (socket) => {
+  console.log('Client connected');
+  // 每秒获取网络状态数据并发送给客户端
+  const fetchAndSendData = async () => {
+    const query = `
+      SELECT * FROM host_monitor
+      WHERE created_time >= NOW() - INTERVAL ${config.other.timeDifference/1000} SECOND
+    `;
+    // console.log('Fetching network stats from database');
+    try {
+      // 查询 host_monitor 表
+      const netHistoryResults = await db.query(query);
+      // 使用 Map 过滤出 server_id 唯一的数据
+      const filteredResults = netHistoryResults.filter((item, index, arr) => {
+        return arr.findIndex(item2 => item2.server_id === item.server_id) === index;
+      });
+      // 提取 server_id 以用于后续查询
+      const serverIds = [...new Set(filteredResults.map(item => item.server_id))];
+      
+      // 如果没有 server_id，直接返回空数据
+      if (serverIds.length === 0) {
+        socket.emit('network-stats', []);
+        return;
+      }
+  
+      // 查询 net_server_data 表以获取 remarks
+      const serverDataResults = await db.query(`
+        SELECT *
+        FROM net_server_data
+        WHERE id IN (?)
+      `, [serverIds]);
+      // 构建 remarks 映射
+      const remarksMap = serverDataResults.reduce((map, row) => {
+        map[row.id] = row;
+        return map;
+      }, {});
+      // console.log('remarksMap',remarksMap);
+      // console.log(serverDataResults);
+  
+      // 将 remarks 添加到 host_monitor 查询结果中
+      const stats = filteredResults.map(item => ({
+        id: item.server_id,
+            remark: remarksMap[item.server_id] || null,
+            platform:item.platform,
+            totalMemory:item.totalMemory,
+            freeMemory:item.freeMemory,
+            usedMemory:item.usedMemory,
+            memoryUsagePercentage:item.memoryUsagePercentage,
+            brand:item.brand,
+            speed:item.speed,
+            timezone:item.timezone,
+            diskTotal:item.diskTotal,
+            diskAvailable:item.diskAvailable,
+            tx_bytes:(item.tx_bytes/1024).toFixed(2),
+            rx_bytes:item.rx_bytes,
+            tx_sec:item.tx_sec,
+            rx_sec:item.rx_sec,
+            created_time: item.created_time
+      }));
+      // 向客户端发送数据
+      socket.emit('network-stats', stats);
+    } catch (error) {
+      console.error('Error fetching network stats from database:', error);
+
+      // 重试机制，重试 3 次，每次间隔 5 秒
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          const netHistoryResults = await db.query(query);
+          const serverIds = [...new Set(netHistoryResults.map(item => item.server_id))];
+          if (serverIds.length === 0) {
+            socket.emit('network-stats', []);
+            return;
+          }
+          const serverDataResults = await db.query(`
+            SELECT id, remarks
+            FROM net_server_data
+            WHERE id IN (?)
+          `, [serverIds]);
+          const remarksMap = serverDataResults.reduce((map, row) => {
+            map[row.id] = row.remarks;
+            return map;
+          }, {});
+          const stats = netHistoryResults.map(item => ({
+            id: item.server_id,
+            remark: remarksMap[item.server_id] || null,
+            platform:item.platform,
+            totalMemory:item.totalMemory,
+            freeMemory:item.freeMemory,
+            usedMemory:item.usedMemory,
+            memoryUsagePercentage:item.memoryUsagePercentage,
+            brand:item.brand,
+            speed:item.speed,
+            timezone:item.timezone,
+            diskTotal:item.diskTotal,
+            diskAvailable:item.diskAvailable,
+            tx_bytes:item.tx_bytes,
+            rx_bytes:item.rx_bytes,
+            tx_sec:item.tx_sec,
+            rx_sec:item.rx_sec,
+            created_time: item.created_time
+          }));
+          socket.emit('network-stats', stats);
+          break; // 成功获取数据，退出重试循环
+        } catch (retryError) {
+          console.error('Retry error:', retryError);
+          retries -= 1;
+          if (retries === 0) {
+            console.error('All retries failed');
+          } else {
+            console.log(`Retrying... ${retries} attempts left`);
+            await new Promise(resolve => setTimeout(resolve, 5000)); // 等待 5 秒后重试
+          }
+        }
+      }
+    }
+  };
+
+  // 初次调用
+  fetchAndSendData();
+
+  // 定时每秒调用一次
+  const intervalId = setInterval(fetchAndSendData, config.other.timeDifference);
+
+  // 当客户端断开连接时清除定时器
+  socket.on('disconnect', () => {
+    console.log('Client disconnected');
+    clearInterval(intervalId);
+  });
+
+  // 捕获 socket 错误，防止应用崩溃
+  socket.on('error', (err) => {
+    if (err.code === 'ECONNRESET') {
+      console.log('Connection reset by peer. Keeping server running...');
+    } else {
+      console.error('Socket error:', err);
+    }
+  });
+});
+/**
+ * Listen on provided port, on all network interfaces.
+ */
+
+server.listen(port);
+server.on('error', onError);
+server.on('listening', onListening);
+
+/**
+ * Normalize a port into a number, string, or false.
+ */
+
+function normalizePort(val) {
+  var port = parseInt(val, 10);
+
+  if (isNaN(port)) {
+    // named pipe
+    return val;
+  }
+
+  if (port >= 0) {
+    // port number
+    return port;
+  }
+
+  return false;
+}
+
+/**
+ * Event listener for HTTP server "error" event.
+ */
+
+function onError(error) {
+  if (error.syscall !== 'listen') {
+    throw error;
+  }
+
+  var bind = typeof port === 'string'
+    ? 'Pipe ' + port
+    : 'Port ' + port;
+
+  // handle specific listen errors with friendly messages
+  switch (error.code) {
+    case 'EACCES':
+      console.error(bind + ' requires elevated privileges');
+      process.exit(1);
+      break;
+    case 'EADDRINUSE':
+      console.error(bind + ' is already in use');
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
+}
+
+/**
+ * Event listener for HTTP server "listening" event.
+ */
+
+function onListening() {
+  var addr = server.address();
+  var bind = typeof addr === 'string'
+    ? 'pipe ' + addr
+    : 'port ' + addr.port;
+  debug('Listening on ' + bind);
+  console.log('Server running at http://localhost:' + port + '/');
+}

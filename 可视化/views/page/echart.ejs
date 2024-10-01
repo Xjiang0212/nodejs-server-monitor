@@ -1,0 +1,231 @@
+<style>
+     
+    #charts-container{
+        margin-top: 2rem;
+        display: flex;
+        flex-wrap: wrap; /* 使超出的元素换行 */
+        gap: 20px; /* 设定元素间距 */
+    }
+    .chart-item {
+        flex: 1 1 calc(50% - 20px); /* 每个折线图占据 50% 宽度，减去间距 */
+        box-sizing: border-box; /* 包含 padding 和 border */
+        height: 300px; /* 设定折线图高度 */
+        background-color: #f0f0f0; /* 可选，设置背景颜色 */
+    }
+    .chart-container {
+      width: 100%;
+      max-width: 1200px;
+      height: 500px;
+      margin: 10px auto;
+      position: relative;
+      border-radius: 20px;
+    }
+    .chart {
+      width: 100%;
+      height: 100%;
+    }
+    .progress-container {
+      position: absolute;
+      top: 2%;
+      left: 9%;
+      max-width: 380px;
+      min-width: 33%;
+      background-color: rgba(0, 0, 0, 0.8);
+      padding: 0 10px;
+      box-sizing: border-box;
+      color: #fff;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+    }
+    .progress-bar-container{
+        flex: 1;
+    }
+    .progress-bar {
+      margin: 5px 0;
+      height: 20px;
+      line-height: 20px;
+      background: #1f77b4;
+      border-radius: 5px;
+      text-align: center;
+      color: #fff;
+    }
+    .progress-bar-send {
+      background: #ff7f0e;
+    }
+    .progress-speed{
+        display: flex;
+        flex-direction: column;
+        margin-left: 2rem;
+        font-size: 1.1rem;
+    }
+    .blinking_gradient {  
+      background: #ff000075;
+      box-shadow: 0px 0px 27px 18px #ff000082;
+      animation: blink 1s infinite; /* 闪烁动画，持续时间1秒，无限次重复 */  
+    }  
+    @keyframes blink {  
+      0%, 100% { 
+        background: #ff000075;
+        box-shadow: 0px 0px 27px 18px #ff000082;
+       }  
+      50% { 
+        background: #ff000000;
+        box-shadow: 0 0 0 0 #ff000000;
+       }  
+    }
+      
+  </style>
+    <div id="charts-container"></div>
+
+    <script>
+        const socket = io('http://localhost:3000');
+    const charts = {}; // 用于存储每个图表实例的对象
+
+// 接收网络状态数据并更新图表和进度条
+socket.on('network-stats', (data) => {
+  data.forEach(item => {
+    let chart = charts[item.id];
+
+    // 如果图表不存在，则初始化
+    if (!chart) {
+      // 创建图表容器
+      const chartContainer = document.createElement('div');
+      chartContainer.className = 'chart-container';
+      chartContainer.id = `chart-${item.id}`;
+
+      // 创建进度条容器
+      const progressContainer = document.createElement('div');
+      progressContainer.id = `progress-${item.id}`;
+      progressContainer.className = 'progress-container';
+      progressContainer.innerHTML = `
+            <div class="progress-bar-container">
+                <div id="progress-receive-${item.id}" class="progress-bar">接收流量: 0 MB</div>
+                <div id="progress-send-${item.id}" class="progress-bar progress-bar-send">发送流量: 0 MB</div>
+            </div>
+            <div class="progress-speed">
+                <span id="speed-receive-${item.id}">接收: 0 MB/秒</span>
+                <span id="speed-send-${item.id}">发送: 0 MB/秒</span>
+            </div>
+      `;
+
+      // 将进度条容器添加到图表容器
+      // 将图表容器添加到主容器
+      document.getElementById('charts-container').appendChild(chartContainer);
+      
+      // 初始化 ECharts 实例
+      chart = echarts.init(chartContainer);
+      charts[item.id] = chart;
+      chartContainer.appendChild(progressContainer);
+
+      // 设置图表的初始配置
+      const option = {
+        title: {
+          text: `${item.ip} - ${item.remark}`,
+          textStyle: { color: '#fff' },
+          top: '0',
+          right: '13%'
+        },
+        tooltip: { trigger: 'axis' },
+        legend: {
+          data: ['接收流量/秒 (KB)', '发送流量/秒 (KB)'],
+          textStyle: { color: '#fff' },
+          right:'10%',
+          top: '40'
+        },
+        grid: {
+          top: '25%',
+          left: '10%',
+          right: '10%',
+          bottom: '20%',
+          containLabel: true
+        },
+        xAxis: {
+          type: 'category',
+          data: [],
+          boundaryGap: true,
+          axisLabel: { color: '#fff' },
+          axisLine: { lineStyle: { color: '#fff' } }
+        },
+        yAxis: {
+          type: 'value',
+          name: 'Kbps',
+          min: 0.01,
+          axisLabel: { color: '#fff' },
+          axisLine: { lineStyle: { color: '#fff' } }
+        },
+        series: [
+          {
+            name: '接收流量/秒 (KB)',
+            type: 'line',
+            smooth: false, // 平滑曲线
+            data: [],
+            itemStyle: { color: '#1f77b4' },
+            animationDuration: 1000 // 动画持续时间
+          },
+          {
+            name: '发送流量/秒 (KB)',
+            type: 'line',
+            smooth: false, // 平滑曲线
+            data: [],
+            itemStyle: { color: '#ff7f0e' },
+            animationDuration: 1000 // 动画持续时间
+          }
+        ],
+
+      };
+
+      chart.setOption(option);
+    }
+
+    // 更新图表数据
+    const option = chart.getOption();
+    const now = new Date().toLocaleTimeString();
+
+    // 更新 xAxis
+    const categories = option.xAxis[0].data;
+    if (categories.length > 30) categories.shift();
+    categories.push(now);
+
+    // 更新 series 数据
+    const rxSecData = option.series[0].data;
+    const txSecData = option.series[1].data;
+    if (rxSecData.length > 30) rxSecData.shift();
+    if (txSecData.length > 30) txSecData.shift();
+    rxSecData.push((item.rx_sec / (1024))); // 转换为 MB
+    txSecData.push((item.tx_sec / (1024))); // 转换为 MB
+
+    chart.setOption({
+      xAxis: { data: categories },
+      series: [
+        { data: rxSecData },
+        { data: txSecData }
+      ]
+    });
+
+    // 更新进度条数据
+    const receiveProgress = document.getElementById(`progress-receive-${item.id}`);
+    const sendProgress = document.getElementById(`progress-send-${item.id}`);
+    const speedReceive = document.getElementById(`speed-receive-${item.id}`);
+    const speedSend = document.getElementById(`speed-send-${item.id}`);
+    const rx_sec = (item.rx_sec / (1024)).toFixed(4)
+    const tx_sec = (item.tx_sec / (1024)).toFixed(4)
+    if(tx_sec >= 15 || rx_sec >= 15){
+      const chart = document.querySelector(`#chart-${item.id}`);
+      if(!chart.classList.contains('blinking_gradient')){
+        chart.classList.add('blinking_gradient');
+      }
+    }else{
+      document.querySelector(`#chart-${item.id}`).classList.remove('blinking_gradient');
+    }
+    if (receiveProgress && sendProgress) {
+      receiveProgress.textContent = `接收流量: ${(item.rx_bytes / (1024 * 1024 *1024)).toFixed(2)} GB`;
+      sendProgress.textContent = `发送流量: ${(item.tx_bytes / (1024 * 1024 *1024)).toFixed(2)} GB`;
+      speedReceive.textContent = `接收: ${rx_sec} KB/秒`;
+      speedSend.textContent = `发送: ${tx_sec} KB/秒`;
+    } else {
+      console.error(`进度条元素未找到: progress-receive-${item.id} 或 progress-send-${item.id}`);
+    }
+  });
+})
+</script>

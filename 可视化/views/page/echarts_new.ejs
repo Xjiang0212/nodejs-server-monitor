@@ -1,0 +1,165 @@
+<style>
+    :root{
+
+        --t-color:#0081aa;
+    }
+    #charts-box {
+        display: flex;
+        flex-wrap: wrap;
+        align-content: center;
+        min-height: 100vh;
+
+    }
+
+    .chart-item {
+        width: 950px;
+        height: 300px;
+        display: flex;
+        position: relative;
+        padding: 1rem;
+        padding-top: 6rem;
+        margin: 1rem 0 0 1rem;
+        
+    }
+    .chart-title{
+        position: absolute;
+        top: 0;
+        left: 23px;
+        padding: 1rem;
+        border: 1px solid #cccccc40;
+        display: flex;
+        width: 92%;
+        justify-content: space-between;
+        font-size: .9rem;
+        color: var(--t-color);
+        border-radius: 4px;
+    }
+    .chart-title-active{
+        animation: toolgBg 2s linear 1s infinite;
+    }
+
+    .chart-line {
+        width: 70%;
+    }
+
+    .chart-dial {
+        width: 30%;
+        height: 100%;
+        transform: translateY(50px);
+    }
+
+    @keyframes toolgBg {
+        0%{
+            background: transparent;
+            color:var(--t-color);
+        }
+        50%{
+            background: red;
+            color: #fff;
+        }
+        100%{
+            background: transparent;
+            color: var(--t-color);
+        }
+    }
+</style>
+
+<div id="charts-box">
+
+</div>
+<script type="module">
+    const socket = io(window.location.origin);
+    import { dialOptions, lineOptions } from '/javascripts/echartsOptions.js';
+
+    let lineData = {};
+    let chartList = {};
+    let msgList = [
+        {remarks:{t:'备注',u:''},ip:{t:'IP',u:''}},
+        {timezone:{t:'时区',u:''},platform:{t:'系统',u:''}},
+        {tx_bytes:{t:'上传',u:'GB'},rx_bytes:{t:'下载',u:'GB'}},
+        {tx_sec:{t:'上行',u:'Kb/s'},rx_sec:{t:'下行',u:'Kb/s'}},
+        {diskTotal:{t:'磁盘',u:'GB'},diskAvailable:{t:'剩余',u:'GB'}},
+        {totalMemory:{t:'内存',u:'MB'},freeMemory:{t:'剩余',u:'MB'}},
+        
+    ];
+    function initChartList(id) {
+        if (chartList[id]) return; // 如果图表已存在，则返回
+
+        lineData[id] = { date: [], rx: [], tx: [] };
+
+        const chartBox = document.getElementById('charts-box');
+        const chartHTML = `
+        <div id="${id}" class="chart-item">
+            <div id="${id}-title" class="chart-title">
+                
+            </div>
+            <div id="${id}-line" class="chart-line"></div>
+            <div id="${id}-dial" class="chart-dial"></div>
+        </div>`;
+        chartBox.insertAdjacentHTML('beforeend', chartHTML);
+
+        const chartDial = document.getElementById(`${id}-dial`);
+        const chartLine = document.getElementById(`${id}-line`);
+
+        chartList[id] = {
+            dial: echarts.init(chartDial),
+            line: echarts.init(chartLine)
+        };
+
+        chartList[id].dial.setOption(dialOptions);
+        chartList[id].line.setOption(lineOptions);
+        console.log('初始化成功', chartList[id]);
+    }
+    function updateChartTitle(id, data) {
+        const chartTitle = document.getElementById(`${id}-title`);
+        chartTitle.innerHTML = '';
+
+        msgList.forEach((item,index) => {
+            // if(index != 0){
+                const keys = Object.keys(item);
+                if(data.tx_sec > 30 || data.rx_sec > 30){
+                    chartTitle.className += ' chart-title-active';
+                }else{
+                    chartTitle.className = chartTitle.className.replaceAll(' chart-title-active','');
+                }
+                chartTitle.innerHTML += `
+                    <div class="chart-title-item" >
+                    ${item[keys[0]].t}：<span>${data[keys[0]] || data.remark[keys[0]]} ${item[keys[0]].u || ''}</span><br><br>
+                    ${item[keys[1]].t}：<span>${data[keys[1]] || data.remark[keys[1]]} ${item[keys[1]].u || ''}</span><br>
+                    </div>
+                `;
+            // }
+        });
+    }
+    socket.on('network-stats', (res) => {
+        res.forEach((item) => {
+            const id = `chart${item.id}`;
+            initChartList(id); // 确保图表初始化
+            updateChartTitle(id, item)
+            console.log(id,item);
+            const line = lineData[id];
+            line.date.push(item.created_time);
+            if (line.rx.length >= 500) {
+                line.date = line.date.slice(line.date.length / 2);
+                line.rx = line.rx.slice(line.rx.length / 2);
+                line.tx = line.tx.slice(line.tx.length / 2);
+            }
+            line.rx.push(item.rx_sec);
+            line.tx.push(item.tx_sec);
+
+            // 更新拨号图
+            chartList[id].dial.setOption({
+                series: [{ data: [{ value: item.memoryUsagePercentage }] }]
+            });
+
+            // 更新折线图
+            chartList[id].line.setOption({
+                xAxis: { data: line.date },
+                series: [
+                    { data: line.tx },
+                    { data: line.rx }
+                ]
+            });
+        });
+    });
+</script>

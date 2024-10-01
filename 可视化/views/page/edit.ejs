@@ -1,0 +1,157 @@
+<!-- public/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>服务器信息</title>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <style>
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: 8px;
+      text-align: left;
+      border: 1px solid #ddd;
+    }
+    th {
+      background-color: #f4f4f4;
+    }
+    input[type="text"] {
+      width: 100%;
+      box-sizing: border-box;
+    }
+    #add-server-dialog {
+      display: none;
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      padding: 20px;
+      border: 1px solid #ddd;
+      background: #fff;
+      z-index: 1000;
+    }
+    #overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 999;
+    }
+    .btn {
+      padding: 8px 16px;
+      margin: 4px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h1>服务器信息</h1>
+  <button class="btn" onclick="showAddServerDialog()">新增服务器</button>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>IP</th>
+        <th>Port</th>
+        <th>Status</th>
+        <th>Remarks</th>
+        <th>Created Time</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="server-table-body">
+    </tbody>
+  </table>
+
+  <div id="overlay"></div>
+  <div id="add-server-dialog">
+    <h2>新增服务器</h2>
+    <form id="add-server-form">
+      <label for="ip">IP:</label>
+      <input type="text" id="ip" name="ip" required><br>
+      <label for="port">Port:</label>
+      <input type="text" id="port" name="port" required><br>
+      <label for="remarks">Remarks:</label>
+      <input type="text" id="remarks" name="remarks" required><br><br>
+      <button type="button" class="btn" onclick="addServer()">提交</button>
+      <button type="button" class="btn" onclick="closeAddServerDialog()">取消</button>
+    </form>
+  </div>
+
+  <script>
+    async function fetchServers() {
+      const response = await fetch('/api/servers');
+      const servers = await response.json();
+      const tableBody = document.getElementById('server-table-body');
+      tableBody.innerHTML = '';
+
+      servers.forEach(server => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td>${server.id}</td>
+          <td><input type="text" value="${server.ip}" data-id="${server.id}" data-field="ip"></td>
+          <td><input type="text" value="${server.port}" data-id="${server.id}" data-field="port"></td>
+          <td><input type="text" value="${server.status}" data-id="${server.id}" data-field="status"></td>
+          <td><input type="text" value="${server.remarks}" data-id="${server.id}" data-field="remarks"></td>
+          <td>${server.created_time}</td>
+          <td><button onclick="updateServer(${server.id})">Update</button></td>
+        `;
+        tableBody.appendChild(row);
+      });
+    }
+
+    async function updateServer(id) {
+      const inputs = document.querySelectorAll(`input[data-id="${id}"]`);
+      const data = {};
+      inputs.forEach(input => {
+        data[input.dataset.field] = input.value;
+      });
+      data.id = id;
+
+      await fetch('/api/update-server', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams(data)
+      });
+
+      fetchServers(); // Refresh the table after update
+    }
+
+    function showAddServerDialog() {
+      document.getElementById('add-server-dialog').style.display = 'block';
+      document.getElementById('overlay').style.display = 'block';
+    }
+
+    function closeAddServerDialog() {
+      document.getElementById('add-server-dialog').style.display = 'none';
+      document.getElementById('overlay').style.display = 'none';
+    }
+
+    async function addServer() {
+      const ip = document.getElementById('ip').value;
+      const port = document.getElementById('port').value;
+      const remarks = document.getElementById('remarks').value;
+
+      await axios.post('/api/add-server', {
+        ip: ip,
+        port: port,
+        remarks: remarks
+      });
+
+      closeAddServerDialog();
+      fetchServers(); // Refresh the table after adding
+    }
+
+    document.addEventListener('DOMContentLoaded', fetchServers);
+  </script>
+</body>
+</html>
